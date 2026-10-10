@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct FlagItem: Identifiable, Hashable {
     var id = UUID()
@@ -68,6 +69,12 @@ struct JSONDocument: FileDocument {
     }
 }
 
+struct SavedPreset: Identifiable, Codable {
+    var id = UUID()
+    var name: String
+    var json: String
+}
+
 struct ContentView: View {
     @State private var flags: [FlagItem] = [
         FlagItem(key: "ExampleBooleanFlag", value: .bool(true)),
@@ -84,6 +91,13 @@ struct ContentView: View {
     @State private var newKey = ""
     @State private var newValue = "true"
     @State private var newType = "Boolean"
+    @State private var showingPresets = false
+    @State private var presetName = ""
+    @AppStorage("savedFlagPresetsData") private var savedPresetsData: Data = Data()
+
+    private var savedPresets: [SavedPreset] {
+        (try? JSONDecoder().decode([SavedPreset].self, from: savedPresetsData)) ?? []
+    }
 
     private var filtered: [FlagItem] {
         let result = flags.filter { search.isEmpty || $0.key.localizedCaseInsensitiveContains(search) }
@@ -133,6 +147,7 @@ struct ContentView: View {
                     Menu {
                         Button("Import JSON", systemImage: "square.and.arrow.down") { showingImporter = true }
                         Button("Export JSON", systemImage: "square.and.arrow.up") { prepareExport() }
+                        Button("Saved Presets (\(savedPresets.count)/10)", systemImage: "square.stack.3d.up") { showingPresets = true }
                         Button("Load example preset", systemImage: "sparkles") { loadExample() }
                         Button("Clear all flags", systemImage: "trash", role: .destructive) { flags = [] }
                     } label: { Image(systemName: "ellipsis.circle") }
@@ -141,6 +156,7 @@ struct ContentView: View {
             .searchable(text: $search, prompt: "Search flag names")
             .sheet(isPresented: $showingAdd) { editorSheet(isEditing: false) }
             .sheet(item: $editing) { item in editorSheet(isEditing: true, item: item) }
+            .sheet(isPresented: $showingPresets) { presetsSheet }
             .fileImporter(isPresented: $showingImporter, allowedContentTypes: [.json, .plainText]) { result in
                 importJSON(result)
             }
@@ -169,9 +185,22 @@ struct ContentView: View {
                 Text("JSON").font(.caption2.weight(.bold)).padding(.horizontal, 8).padding(.vertical, 4)
                     .background(Color.purple.opacity(0.2)).clipShape(Capsule())
             }
-            Text("Manage your flags").font(.title2.bold())
-            Text("Edit locally, then export a JSON file. Unsupported flags may be ignored by Roblox.")
-                .font(.footnote).foregroundStyle(.secondary)
+            HStack(alignment: .center) {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Manage your flags").font(.title2.bold())
+                    Text("Edit locally, then export a JSON file. Unsupported flags may be ignored by Roblox.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Button(action: launchRoblox) {
+                    Label("Roblox", systemImage: "play.fill")
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 12).padding(.vertical, 10)
+                        .background(Color.purple.opacity(0.22))
+                        .clipShape(Capsule())
+                }
+                .buttonStyle(.plain)
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -262,6 +291,120 @@ struct ContentView: View {
             }
         }
         .presentationDetents([.medium, .large])
+    }
+
+    private var presetsSheet: some View {
+        NavigationStack {
+            Form {
+                Section("Save current flags") {
+                    TextField("Preset name", text: $presetName)
+                    Button {
+                        saveCurrentPreset()
+                    } label: {
+                        Label("Save Preset (\(savedPresets.count)/10)", systemImage: "square.and.arrow.down")
+                    }
+                    .disabled(presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || savedPresets.count >= 10)
+                    if savedPresets.count >= 10 {
+                        Text("You've reached the limit of 10 saved presets. Delete one to save another.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                }
+                Section("Your saved presets") {
+                    if savedPresets.isEmpty {
+                        Text("No saved presets yet.").foregroundStyle(.secondary)
+                    } else {
+                        ForEach(savedPresets) { preset in
+                            HStack {
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(preset.name).font(.headline)
+                                    Text(presetFlagCount(preset.json) + " flags")
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                Button("Load") { loadPreset(preset) }
+                                    .buttonStyle(.borderedProminent)
+                                Button(role: .destructive) { deletePreset(preset) } label: {
+                                    Image(systemName: "trash")
+                                }
+                                .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                }
+                Section {
+                    Text("Presets are stored on this iPad and contain your JSON configuration. Saving or loading a preset does not apply flags to Roblox.")
+                        .font(.footnote).foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Saved Presets")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { showingPresets = false }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+    }
+
+    private func updateSavedPresets(_ presets: [SavedPreset]) {
+        savedPresetsData = (try? JSONEncoder().encode(presets)) ?? Data()
+    }
+
+    private func saveCurrentPreset() {
+        guard savedPresets.count < 10 else {
+            alertMessage = "You can save a maximum of 10 presets. Delete one first."
+            return
+        }
+        let name = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        do {
+            let json = try makeJSON()
+            var presets = savedPresets
+            presets.append(SavedPreset(name: name, json: json))
+            updateSavedPresets(presets)
+            presetName = ""
+            alertMessage = "Preset saved on this iPad."
+        } catch {
+            alertMessage = "Could not save preset: \(error.localizedDescription)"
+        }
+    }
+
+    private func loadPreset(_ preset: SavedPreset) {
+        do {
+            let object = try JSONSerialization.jsonObject(with: Data(preset.json.utf8))
+            guard let dictionary = object as? [String: Any] else {
+                alertMessage = "This preset is not a valid flags object."
+                return
+            }
+            flags = dictionary.keys.sorted().map { FlagItem(key: $0, value: JSONValue(any: dictionary[$0]!)) }
+            showingPresets = false
+            alertMessage = "Loaded \(preset.name). These flags are edited locally and are not automatically applied to Roblox."
+        } catch {
+            alertMessage = "Could not load preset: \(error.localizedDescription)"
+        }
+    }
+
+    private func deletePreset(_ preset: SavedPreset) {
+        updateSavedPresets(savedPresets.filter { $0.id != preset.id })
+    }
+
+    private func presetFlagCount(_ json: String) -> String {
+        guard let data = json.data(using: .utf8), let object = try? JSONSerialization.jsonObject(with: data),
+              let dictionary = object as? [String: Any] else { return "0" }
+        return String(dictionary.count)
+    }
+
+    private func launchRoblox() {
+        guard let url = URL(string: "roblox://") else {
+            alertMessage = "Could not create the Roblox launch URL."
+            return
+        }
+        UIApplication.shared.open(url, options: [:]) { success in
+            if !success {
+                alertMessage = "Roblox couldn't be opened. Make sure Roblox is installed on this iPad. This button only launches Roblox; it does not apply FastFlags."
+            }
+        }
     }
 
     private func clearForm() { newKey = ""; newValue = "true"; newType = "Boolean" }
