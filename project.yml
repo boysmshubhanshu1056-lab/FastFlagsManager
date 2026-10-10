@@ -1,0 +1,22 @@
+name: FastFlagsManager
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  FastFlagsManager:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+      - Assets.xcassets
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.fastflagsmanager
+        PRODUCT_NAME: FastFlagsManager
+        SWIFT_VERSION: "5.0"
+        TARGETED_DEVICE_FAMILY: "1,2"
+        INFOPLIST_KEY_CFBundleDisplayName: FastFlags
+        INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
+        GENERATE_INFOPLIST_FILE: YES
+        IPHONEOS_DEPLOYMENT_TARGET: "16.0"
