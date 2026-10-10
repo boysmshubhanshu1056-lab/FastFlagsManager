@@ -18,3 +18,13 @@ INFOPLIST_KEY_LSApplicationCategoryType: public.app-category.utilities
 GENERATE_INFOPLIST_FILE: YES
 IPHONEOS_DEPLOYMENT_TARGET: “16.0”
 ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+
+schemes:
+FastFlagsManager:
+build:
+targets:
+FastFlagsManager: all
+run:
+config: Debug
+archive:
+config: Release
