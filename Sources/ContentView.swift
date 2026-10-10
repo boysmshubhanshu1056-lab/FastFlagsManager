@@ -1,5 +1,6 @@
 
 import SwiftUI
+import UIKit
 import UniformTypeIdentifiers
 
 // MARK: - Preset Model
@@ -8,14 +9,14 @@ struct FlagPreset: Identifiable, Codable {
     var id: UUID = UUID()
     var name: String
     var json: String
-    var date: Date = Date()
+    var createdAt: Date = Date()
 }
 
 // MARK: - Main View
 
 struct ContentView: View {
 
-    enum Page: String, CaseIterable, Identifiable {
+    private enum Page: String, CaseIterable, Identifiable {
         case engine = "Engine"
         case flags = "Fast Flags"
         case presets = "Presets"
@@ -25,59 +26,41 @@ struct ContentView: View {
 
         var icon: String {
             switch self {
-            case .engine: return "cpu"
+            case .engine: return "speedometer"
             case .flags: return "slider.horizontal.3"
-            case .presets: return "bookmark"
+            case .presets: return "square.stack.3d.up"
             case .settings: return "gearshape"
             }
         }
     }
 
-    @State private var selection: Page? = .engine
-    @State private var flagJSON = "{}"
-    @State private var presets: [FlagPreset] = []
+    private static let flagsKey = "FastFlagsManager.flags.v1"
+    private static let presetsKey = "FastFlagsManager.presets.v1"
+    private static let maxPresets = 10
 
-    @State private var showingImporter = false
-    @State private var showingSaveSheet = false
-    @State private var showingDeleteConfirmation = false
-    @State private var presetToDelete: FlagPreset?
+    @State private var selection: Page = .engine
+
+    @State private var flagJSON: String =
+        UserDefaults.standard.string(
+            forKey: "FastFlagsManager.flags.v1"
+        ) ?? "{}"
+
+    @State private var presets: [FlagPreset] = Self.loadPresets()
+
     @State private var presetName = ""
-
+    @State private var showSavePreset = false
+    @State private var showFileImporter = false
+    @State private var showDeleteConfirmation = false
+    @State private var presetToDelete: FlagPreset?
     @State private var statusMessage = ""
-    @State private var showingStatus = false
-
-    private let storageKey = "FastFlagsManager.presets.v1"
-
-    private var isValidJSON: Bool {
-        guard let data = flagJSON.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(
-                with: data,
-                options: [.fragmentsAllowed]
-              ) else {
-            return false
-        }
-        return object is [String: Any]
-    }
+    @State private var showStatus = false
 
     var body: some View {
         NavigationSplitView {
-            List(selection: $selection) {
-                Section("WORKSPACE") {
-                    ForEach(Page.allCases) { page in
-                        Label(page.rawValue, systemImage: page.icon)
-                            .tag(Optional(page))
-                    }
-                }
-            }
-            .navigationTitle("FastFlags")
-            .navigationSplitViewColumnWidth(
-                min: 190,
-                ideal: 225,
-                max: 290
-            )
+            sidebar
         } detail: {
             Group {
-                switch selection ?? .engine {
+                switch selection {
                 case .engine:
                     enginePage
                 case .flags:
@@ -89,301 +72,327 @@ struct ContentView: View {
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color(uiColor: .systemGroupedBackground))
+            .background(Color(uiColor: .systemBackground))
         }
-        .onAppear {
-            loadPresetsFromDisk()
+        .navigationSplitViewStyle(.balanced)
+        .tint(.cyan)
+        .onChange(of: flagJSON) { newValue in
+            UserDefaults.standard.set(newValue, forKey: Self.flagsKey)
         }
         .fileImporter(
-            isPresented: $showingImporter,
+            isPresented: $showFileImporter,
             allowedContentTypes: [.json],
             allowsMultipleSelection: false
         ) { result in
             importJSON(result)
         }
-        .sheet(isPresented: $showingSaveSheet) {
-            savePresetSheet
+        .alert("Save Preset", isPresented: $showSavePreset) {
+            TextField("Preset name", text: $presetName)
+
+            Button("Cancel", role: .cancel) {
+                presetName = ""
+            }
+
+            Button("Save") {
+                savePreset()
+            }
+        } message: {
+            Text("Save your current JSON for later.")
         }
         .confirmationDialog(
             "Delete this preset?",
-            isPresented: $showingDeleteConfirmation,
+            isPresented: $showDeleteConfirmation,
             titleVisibility: .visible
         ) {
-            Button("Delete Preset", role: .destructive) {
+            Button("Delete", role: .destructive) {
                 if let preset = presetToDelete {
                     deletePreset(preset)
                 }
             }
-            Button("Cancel", role: .cancel) {
-                presetToDelete = nil
-            }
-        } message: {
-            Text("This removes the saved preset from this device.")
+
+            Button("Cancel", role: .cancel) {}
         }
-        .alert("FastFlagsManager", isPresented: $showingStatus) {
+        .alert("FastFlags Manager", isPresented: $showStatus) {
             Button("OK", role: .cancel) {}
         } message: {
             Text(statusMessage)
         }
     }
 
-    // MARK: - Engine
+    // MARK: - Sidebar
+
+    private var sidebar: some View {
+        List {
+            Section {
+                ForEach(Page.allCases) { page in
+                    Button {
+                        selection = page
+                    } label: {
+                        Label(page.rawValue, systemImage: page.icon)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .listRowBackground(
+                        selection == page
+                        ? Color.cyan.opacity(0.18)
+                        : Color.clear
+                    )
+                }
+            } header: {
+                Text("FASTFLAGS")
+                    .font(.caption.weight(.bold))
+            }
+
+            Section {
+                Label("Local JSON Storage", systemImage: "internaldrive")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Text("\(presets.count)/\(Self.maxPresets) presets saved")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .listStyle(.sidebar)
+        .navigationTitle("FFlags")
+    }
+
+    // MARK: - Engine Page
 
     private var enginePage: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 pageHeader(
                     "Engine",
-                    subtitle: "Your FastFlags workspace at a glance."
+                    subtitle: "Your FastFlags Manager dashboard."
                 )
 
-                LazyVGrid(
-                    columns: [
-                        GridItem(.flexible()),
-                        GridItem(.flexible())
-                    ],
-                    spacing: 14
-                ) {
+                HStack(spacing: 12) {
                     statCard(
-                        title: "JSON Status",
+                        title: "Presets",
+                        value: "\(presets.count)/\(Self.maxPresets)",
+                        icon: "square.stack.3d.up"
+                    )
+
+                    statCard(
+                        title: "JSON",
                         value: isValidJSON ? "Valid" : "Invalid",
-                        icon: isValidJSON
-                            ? "checkmark.circle"
-                            : "exclamationmark.circle"
-                    )
-
-                    statCard(
-                        title: "Saved Presets",
-                        value: "\(presets.count) / 10",
-                        icon: "bookmark"
+                        icon: "curlybraces"
                     )
                 }
 
-                GroupBox("Current Configuration") {
-                    VStack(alignment: .leading, spacing: 12) {
-                        Text("Manage your current JSON configuration.")
-                            .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Roblox", systemImage: "gamecontroller.fill")
+                        .font(.headline)
 
-                        HStack {
-                            Label(
-                                isValidJSON ? "JSON is valid" : "Check your JSON",
-                                systemImage: isValidJSON
-                                    ? "checkmark.circle.fill"
-                                    : "exclamationmark.circle.fill"
-                            )
+                    Text(
+                        "Open Roblox from here. This app manages your JSON locally; " +
+                        "it cannot directly inject custom FastFlags into the official Roblox iOS app."
+                    )
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
 
-                            Spacer()
-
-                            Button("Open Editor") {
-                                selection = .flags
-                            }
-                            .buttonStyle(.borderedProminent)
-                        }
+                    Button(action: launchRoblox) {
+                        Label("Launch Roblox", systemImage: "play.fill")
+                            .font(.headline)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, 8)
                     }
-                    .padding(.vertical, 4)
+                    .buttonStyle(.borderedProminent)
                 }
+                .padding()
+                .background(Color(uiColor: .secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
 
-                GroupBox("Quick Actions") {
-                    VStack(spacing: 12) {
-                        actionRow(
-                            "Import JSON",
-                            description: "Open a .json file",
-                            icon: "doc.badge.plus"
-                        ) {
-                            showingImporter = true
-                        }
+                VStack(alignment: .leading, spacing: 12) {
+                    Label("Quick Actions", systemImage: "bolt.fill")
+                        .font(.headline)
 
-                        Divider()
-
-                        actionRow(
-                            "Save Preset",
-                            description: "Store your configuration",
-                            icon: "bookmark"
-                        ) {
-                            beginSavingPreset()
-                        }
-
-                        Divider()
-
-                        actionRow(
-                            "View Presets",
-                            description: "Load or delete configurations",
-                            icon: "square.stack"
-                        ) {
-                            selection = .presets
-                        }
+                    Button {
+                        selection = .flags
+                    } label: {
+                        Label("Edit Fast Flags", systemImage: "slider.horizontal.3")
+                            .frame(maxWidth: .infinity, alignment: .leading)
                     }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        selection = .presets
+                    } label: {
+                        Label("Manage Presets", systemImage: "square.stack.3d.up")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
+
+                    Button {
+                        showFileImporter = true
+                    } label: {
+                        Label("Import JSON File", systemImage: "doc.badge.plus")
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.bordered)
                 }
+                .padding()
+                .background(Color(uiColor: .secondarySystemBackground))
+                .clipShape(RoundedRectangle(cornerRadius: 16))
             }
-            .padding(24)
-            .frame(maxWidth: 850, alignment: .leading)
-            .frame(maxWidth: .infinity)
+            .padding()
         }
-        .navigationTitle("Engine")
     }
 
-    // MARK: - Fast Flags Editor
+    // MARK: - Fast Flags Page
 
     private var flagsPage: some View {
         VStack(alignment: .leading, spacing: 16) {
             pageHeader(
                 "Fast Flags",
-                subtitle: "Import, paste, or edit your JSON configuration."
+                subtitle: "Edit or import your JSON configuration."
             )
 
-            HStack(spacing: 10) {
-                Button {
-                    showingImporter = true
-                } label: {
-                    Label("Import JSON", systemImage: "doc.badge.plus")
-                }
-                .buttonStyle(.bordered)
-
-                Button {
-                    beginSavingPreset()
-                } label: {
-                    Label("Save Preset", systemImage: "bookmark")
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(!isValidJSON || presets.count >= 10)
+            HStack {
+                Label(
+                    isValidJSON ? "Valid JSON" : "Invalid JSON",
+                    systemImage: isValidJSON ? "checkmark.circle.fill" : "xmark.circle.fill"
+                )
+                .foregroundStyle(isValidJSON ? .green : .red)
 
                 Spacer()
 
-                Text(isValidJSON ? "Valid JSON" : "Invalid JSON")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(isValidJSON ? .green : .red)
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label("Import", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.bordered)
             }
 
             TextEditor(text: $flagJSON)
                 .font(.system(.body, design: .monospaced))
                 .scrollContentBackground(.hidden)
-                .padding(10)
-                .background(Color(uiColor: .secondarySystemGroupedBackground))
+                .padding(8)
+                .background(Color(uiColor: .secondarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay {
                     RoundedRectangle(cornerRadius: 12)
-                        .strokeBorder(Color.secondary.opacity(0.2))
+                        .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
                 }
 
             HStack {
-                Text("JSON object required")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                Button {
+                    formatJSON()
+                } label: {
+                    Label("Format JSON", systemImage: "text.alignleft")
+                }
+                .buttonStyle(.bordered)
 
                 Spacer()
 
-                Button("Clear Editor", role: .destructive) {
-                    flagJSON = "{}"
+                Button {
+                    presetName = ""
+                    showSavePreset = true
+                } label: {
+                    Label("Save as Preset", systemImage: "square.and.arrow.down")
                 }
-                .buttonStyle(.bordered)
+                .buttonStyle(.borderedProminent)
+                .disabled(!isValidJSON || presets.count >= Self.maxPresets)
             }
+
+            Text("Changes are saved locally on this device.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
-        .padding(24)
-        .navigationTitle("Fast Flags")
+        .padding()
     }
 
-    // MARK: - Presets
+    // MARK: - Presets Page
 
     private var presetsPage: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        VStack(alignment: .leading, spacing: 16) {
             pageHeader(
                 "Presets",
-                subtitle: "Save up to 10 complete JSON configurations."
+                subtitle: "Save and reuse your JSON configurations."
             )
 
             HStack {
-                Text("\(presets.count) of 10 slots used")
+                Text("\(presets.count) of \(Self.maxPresets) slots used")
+                    .font(.subheadline)
                     .foregroundStyle(.secondary)
 
                 Spacer()
 
                 Button {
-                    beginSavingPreset()
+                    presetName = ""
+                    showSavePreset = true
                 } label: {
-                    Label("Save Current", systemImage: "plus")
+                    Label("New Preset", systemImage: "plus")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(!isValidJSON || presets.count >= 10)
+                .disabled(!isValidJSON || presets.count >= Self.maxPresets)
             }
 
             if presets.isEmpty {
-                VStack(spacing: 14) {
-                    Image(systemName: "bookmark")
+                Spacer()
+
+                VStack(spacing: 12) {
+                    Image(systemName: "square.stack.3d.up")
                         .font(.system(size: 42))
                         .foregroundStyle(.secondary)
 
                     Text("No Presets Yet")
-                        .font(.title2.bold())
+                        .font(.title3.weight(.semibold))
 
-                    Text("Import or paste your FastFlags JSON, then save it here.")
+                    Text("Edit your JSON and save it as a preset.")
+                        .font(.subheadline)
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
-
-                    Button("Open Fast Flags Editor") {
-                        selection = .flags
-                    }
-                    .buttonStyle(.borderedProminent)
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(24)
+                .frame(maxWidth: .infinity)
+
+                Spacer()
             } else {
                 List {
                     ForEach(presets) { preset in
                         VStack(alignment: .leading, spacing: 10) {
-                            HStack(alignment: .top) {
-                                Image(systemName: "doc.text")
-                                    .font(.title2)
-                                    .foregroundStyle(.tint)
-
+                            HStack {
                                 VStack(alignment: .leading, spacing: 4) {
                                     Text(preset.name)
                                         .font(.headline)
 
-                                    Text("\(flagCount(in: preset.json)) top-level flags")
-                                        .font(.caption)
-                                        .foregroundStyle(.secondary)
-
-                                    Text(preset.date, style: .date)
-                                        .font(.caption2)
-                                        .foregroundStyle(.secondary)
+                                    Text(preset.createdAt.formatted(
+                                        date: .abbreviated,
+                                        time: .shortened
+                                    ))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
                                 }
 
                                 Spacer()
 
-                                Menu {
-                                    Button {
-                                        loadPreset(preset)
-                                    } label: {
-                                        Label("Load", systemImage: "arrow.down.doc")
-                                    }
-
-                                    Button(role: .destructive) {
-                                        presetToDelete = preset
-                                        showingDeleteConfirmation = true
-                                    } label: {
-                                        Label("Delete", systemImage: "trash")
-                                    }
+                                Button(role: .destructive) {
+                                    presetToDelete = preset
+                                    showDeleteConfirmation = true
                                 } label: {
-                                    Image(systemName: "ellipsis.circle")
-                                        .font(.title2)
+                                    Image(systemName: "trash")
                                 }
+                                .buttonStyle(.borderless)
                             }
 
                             HStack {
                                 Button {
-                                    loadPreset(preset)
+                                    flagJSON = preset.json
+                                    selection = .flags
+                                    report("Loaded preset: \(preset.name)")
                                 } label: {
                                     Label("Load", systemImage: "arrow.down.doc")
-                                        .frame(maxWidth: .infinity)
                                 }
                                 .buttonStyle(.borderedProminent)
 
-                                Button(role: .destructive) {
-                                    presetToDelete = preset
-                                    showingDeleteConfirmation = true
+                                Button {
+                                    GenUICopyJSON(preset.json)
+                                    report("Preset JSON copied.")
                                 } label: {
-                                    Label("Delete", systemImage: "trash")
-                                        .frame(maxWidth: .infinity)
+                                    Label("Copy JSON", systemImage: "doc.on.doc")
                                 }
                                 .buttonStyle(.bordered)
                             }
@@ -391,117 +400,68 @@ struct ContentView: View {
                         .padding(.vertical, 6)
                     }
                 }
-                .listStyle(.inset)
+                .listStyle(.insetGrouped)
             }
         }
-        .padding(24)
-        .navigationTitle("Presets")
+        .padding()
     }
 
-    // MARK: - Settings
+    // MARK: - Settings Page
 
     private var settingsPage: some View {
         Form {
             Section("Storage") {
-                LabeledContent("Preset capacity", value: "10")
-                LabeledContent("Presets saved", value: "\(presets.count)")
-                LabeledContent("Storage", value: "On this device")
+                LabeledContent("Preset limit", value: "\(Self.maxPresets)")
+                LabeledContent("Saved presets", value: "\(presets.count)")
+                LabeledContent("Configuration", value: "On this device")
             }
 
-            Section("JSON") {
-                LabeledContent(
-                    "Current editor",
-                    value: isValidJSON ? "Valid" : "Invalid"
+            Section("Actions") {
+                Button {
+                    showFileImporter = true
+                } label: {
+                    Label("Import JSON", systemImage: "square.and.arrow.down")
+                }
+
+                Button {
+                    flagJSON = "{}"
+                    report("JSON editor reset.")
+                } label: {
+                    Label("Reset JSON Editor", systemImage: "arrow.counterclockwise")
+                }
+
+                Button(role: .destructive) {
+                    presets = []
+                    persistPresets()
+                    report("All presets deleted.")
+                } label: {
+                    Label("Delete All Presets", systemImage: "trash")
+                }
+            }
+
+            Section("Important") {
+                Text(
+                    "This app stores and edits JSON files. The official Roblox iOS app " +
+                    "does not provide a supported method for this app to apply arbitrary custom FastFlags to the running game."
                 )
-
-                Button("Import JSON File") {
-                    showingImporter = true
-                }
-
-                Button("Open Fast Flags Editor") {
-                    selection = .flags
-                }
+                .font(.footnote)
+                .foregroundStyle(.secondary)
             }
 
             Section("About") {
-                LabeledContent("App", value: "FastFlagsManager")
-
-                Text("This app manages local JSON configurations. Saving a preset does not automatically apply flags to Roblox.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                LabeledContent("App", value: "FastFlags Manager")
+                LabeledContent("Platform", value: "iOS 16+")
             }
         }
         .navigationTitle("Settings")
     }
 
-    // MARK: - Save Preset Sheet
-
-    private var savePresetSheet: some View {
-        NavigationStack {
-            Form {
-                Section("Preset Name") {
-                    TextField(
-                        "e.g. My Configuration",
-                        text: $presetName
-                    )
-                    .textInputAutocapitalization(.words)
-                }
-
-                Section("Configuration") {
-                    LabeledContent(
-                        "Top-level flags",
-                        value: "\(flagCount(in: flagJSON))"
-                    )
-
-                    LabeledContent(
-                        "JSON size",
-                        value: ByteCountFormatter.string(
-                            fromByteCount: Int64(flagJSON.utf8.count),
-                            countStyle: .file
-                        )
-                    )
-                }
-
-                if presets.count >= 10 {
-                    Text("All 10 preset slots are full. Delete one before saving.")
-                        .foregroundStyle(.red)
-                }
-            }
-            .navigationTitle("Save Preset")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") {
-                        showingSaveSheet = false
-                    }
-                }
-
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        savePreset()
-                    }
-                    .disabled(
-                        presetName.trimmingCharacters(
-                            in: .whitespacesAndNewlines
-                        ).isEmpty
-                        || !isValidJSON
-                        || presets.count >= 10
-                    )
-                }
-            }
-        }
-        .presentationDetents([.medium])
-    }
-
     // MARK: - Reusable UI
 
-    private func pageHeader(
-        _ title: String,
-        subtitle: String
-    ) -> some View {
+    private func pageHeader(_ title: String, subtitle: String) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.largeTitle.bold())
+                .font(.largeTitle.weight(.bold))
 
             Text(subtitle)
                 .font(.subheadline)
@@ -515,57 +475,67 @@ struct ContentView: View {
         value: String,
         icon: String
     ) -> some View {
-        GroupBox {
-            VStack(alignment: .leading, spacing: 12) {
-                Image(systemName: icon)
-                    .font(.title2)
-                    .foregroundStyle(.tint)
+        VStack(alignment: .leading, spacing: 12) {
+            Image(systemName: icon)
+                .font(.title2)
+                .foregroundStyle(.cyan)
 
-                Text(value)
-                    .font(.title2.bold())
+            Text(value)
+                .font(.title2.weight(.bold))
 
-                Text(title)
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.vertical, 4)
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding()
+        .background(Color(uiColor: .secondarySystemBackground))
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+    }
+
+    // MARK: - JSON
+
+    private var isValidJSON: Bool {
+        guard let data = flagJSON.data(using: .utf8) else {
+            return false
+        }
+
+        do {
+            let object = try JSONSerialization.jsonObject(
+                with: data,
+                options: [.fragmentsAllowed]
+            )
+            return object is [String: Any]
+        } catch {
+            return false
         }
     }
 
-    private func actionRow(
-        _ title: String,
-        description: String,
-        icon: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                Image(systemName: icon)
-                    .font(.title3)
-                    .frame(width: 32)
-
-                VStack(alignment: .leading, spacing: 3) {
-                    Text(title)
-                        .font(.headline)
-
-                    Text(description)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
-                Spacer()
-
-                Image(systemName: "chevron.right")
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-            }
-            .contentShape(Rectangle())
+    private func formatJSON() {
+        guard let data = flagJSON.data(using: .utf8) else {
+            report("Could not read the JSON text.")
+            return
         }
-        .buttonStyle(.plain)
-    }
 
-    // MARK: - JSON Import
+        do {
+            let object = try JSONSerialization.jsonObject(with: data)
+
+            guard object is [String: Any] else {
+                report("FastFlags JSON must be a JSON object.")
+                return
+            }
+
+            let formatted = try JSONSerialization.data(
+                withJSONObject: object,
+                options: [.prettyPrinted, .sortedKeys]
+            )
+
+            flagJSON = String(decoding: formatted, as: UTF8.self)
+            report("JSON formatted successfully.")
+        } catch {
+            report("Invalid JSON: \(error.localizedDescription)")
+        }
+    }
 
     private func importJSON(_ result: Result<[URL], Error>) {
         switch result {
@@ -580,146 +550,112 @@ struct ContentView: View {
             }
 
             do {
-                let imported = try String(
-                    contentsOf: url,
-                    encoding: .utf8
-                )
+                let data = try Data(contentsOf: url)
+                let object = try JSONSerialization.jsonObject(with: data)
 
-                guard isJSONObject(imported) else {
-                    showStatus("The selected file is not a valid JSON object.")
+                guard object is [String: Any] else {
+                    report("The imported file must contain a JSON object.")
                     return
                 }
 
-                flagJSON = imported
-                showStatus("JSON imported successfully.")
+                let formatted = try JSONSerialization.data(
+                    withJSONObject: object,
+                    options: [.prettyPrinted, .sortedKeys]
+                )
+
+                flagJSON = String(decoding: formatted, as: UTF8.self)
+                selection = .flags
+                report("JSON imported successfully.")
             } catch {
-                showStatus("Could not read file: \(error.localizedDescription)")
+                report("Import failed: \(error.localizedDescription)")
             }
 
         case .failure(let error):
-            showStatus("Import failed: \(error.localizedDescription)")
+            report("Import failed: \(error.localizedDescription)")
         }
     }
 
-    private func isJSONObject(_ json: String) -> Bool {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(
-                with: data,
-                options: [.fragmentsAllowed]
-              ) else {
-            return false
+    // MARK: - Preset Management
+
+    private static func loadPresets() -> [FlagPreset] {
+        guard
+            let data = UserDefaults.standard.data(forKey: presetsKey),
+            let saved = try? JSONDecoder().decode([FlagPreset].self, from: data)
+        else {
+            return []
         }
 
-        return object is [String: Any]
-    }
-
-    private func flagCount(in json: String) -> Int {
-        guard let data = json.data(using: .utf8),
-              let object = try? JSONSerialization.jsonObject(
-                with: data
-              ),
-              let dictionary = object as? [String: Any] else {
-            return 0
-        }
-
-        return dictionary.count
-    }
-
-    // MARK: - Preset Operations
-
-    private func beginSavingPreset() {
-        guard isValidJSON else {
-            showStatus("Fix your JSON before saving.")
-            return
-        }
-
-        guard presets.count < 10 else {
-            showStatus("You have 10 presets. Delete one before saving another.")
-            return
-        }
-
-        presetName = ""
-        showingSaveSheet = true
+        return Array(saved.prefix(maxPresets))
     }
 
     private func savePreset() {
-        let name = presetName.trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
+        let name = presetName.trimmingCharacters(in: .whitespacesAndNewlines)
 
-        guard !name.isEmpty, isValidJSON else { return }
-
-        guard presets.count < 10 else {
-            showingSaveSheet = false
-            showStatus("Preset limit reached.")
+        guard !name.isEmpty else {
+            report("Enter a preset name.")
             return
         }
 
-        let preset = FlagPreset(
-            name: name,
-            json: flagJSON
-        )
+        guard isValidJSON else {
+            report("Fix your JSON before saving.")
+            return
+        }
 
+        guard presets.count < Self.maxPresets else {
+            report("You can save up to \(Self.maxPresets) presets.")
+            return
+        }
+
+        let preset = FlagPreset(name: name, json: flagJSON)
         presets.append(preset)
         persistPresets()
-        showingSaveSheet = false
-        showStatus("Preset '\(name)' saved successfully.")
-    }
-
-    private func loadPreset(_ preset: FlagPreset) {
-        guard isJSONObject(preset.json) else {
-            showStatus("This preset contains invalid JSON.")
-            return
-        }
-
-        flagJSON = preset.json
-        selection = .flags
-        showStatus("Loaded '\(preset.name)' into the editor.")
+        presetName = ""
+        report("Preset saved successfully.")
     }
 
     private func deletePreset(_ preset: FlagPreset) {
         presets.removeAll { $0.id == preset.id }
         persistPresets()
         presetToDelete = nil
-        showStatus("Preset '\(preset.name)' deleted.")
-    }
-
-    // MARK: - Persistent Storage
-
-    private func loadPresetsFromDisk() {
-        guard let data = UserDefaults.standard.data(
-            forKey: storageKey
-        ) else {
-            return
-        }
-
-        do {
-            let saved = try JSONDecoder().decode(
-                [FlagPreset].self,
-                from: data
-            )
-
-            presets = Array(saved.prefix(10))
-        } catch {
-            showStatus("Saved presets could not be read.")
-        }
+        report("Preset deleted.")
     }
 
     private func persistPresets() {
         do {
             let data = try JSONEncoder().encode(presets)
-            UserDefaults.standard.set(data, forKey: storageKey)
+            UserDefaults.standard.set(data, forKey: Self.presetsKey)
         } catch {
-            showStatus("Could not save presets.")
+            report("Could not save presets: \(error.localizedDescription)")
         }
     }
 
-    // MARK: - Alerts
+    // MARK: - Launch Roblox
 
-    private func showStatus(_ message: String) {
-        statusMessage = message
-        showingStatus = true
+    private func launchRoblox() {
+        guard let url = URL(string: "roblox://") else {
+            report("Could not create the Roblox launch link.")
+            return
+        }
+
+        UIApplication.shared.open(url, options: [:]) { success in
+            if !success {
+                report("Roblox could not be opened. Check that Roblox is installed.")
+            }
+        }
     }
+
+    // MARK: - Status
+
+    private func report(_ message: String) {
+        statusMessage = message
+        showStatus = true
+    }
+}
+
+// MARK: - Copy Helper
+
+private func GenUICopyJSON(_ text: String) {
+    UIPasteboard.general.string = text
 }
 
 #Preview {
