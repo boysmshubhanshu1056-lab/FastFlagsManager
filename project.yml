@@ -1,8 +1,5 @@
 name: FastFlagsManager
 
-options:
-bundleIdPrefix: com.example
-
 targets:
 FastFlagsManager:
 type: application
