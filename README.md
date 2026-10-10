@@ -26,3 +26,8 @@ GitHub Actions on a public repository can provide free hosted builds subject to 
 
 ## Notes
 The workflow builds an unsigned device `.app` and packages it into an `.ipa` container. SideStore is used for installation/signing; the workflow itself does not sign with an Apple developer certificate.
+
+
+## iOS launcher and saved presets
+
+The app includes a Roblox launch button and supports saving up to 10 named JSON presets locally on the iPad. Presets are configurations only: iOS app sandboxing means this app does not write into Roblox's private storage, and the launch button does not apply custom FastFlags. Actual FastFlags support depends on Roblox's supported behavior on iOS.
