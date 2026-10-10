@@ -2,8 +2,6 @@ name: FastFlagsManager
 
 options:
 bundleIdPrefix: com.example
-deploymentTarget:
-iOS: “16.0”
 
 targets:
 FastFlagsManager:
