@@ -1,4 +1,5 @@
 name: FastFlagsManager
+
 options:
 bundleIdPrefix: com.example
 deploymentTarget:
@@ -9,8 +10,8 @@ FastFlagsManager:
 type: application
 platform: iOS
 sources:
-- Sources
-- Assets.xcassets
+- path: Sources
+- path: Assets.xcassets
 settings:
 base:
 PRODUCT_BUNDLE_IDENTIFIER: com.example.fastflagsmanager
