@@ -11,7 +11,7 @@ struct FlagPreset: Identifiable, Codable {
     var date: Date = Date()
 }
 
-// MARK: - Main App View
+// MARK: - Main View
 
 struct ContentView: View {
 
@@ -56,7 +56,6 @@ struct ContentView: View {
               ) else {
             return false
         }
-
         return object is [String: Any]
     }
 
@@ -115,7 +114,6 @@ struct ContentView: View {
                     deletePreset(preset)
                 }
             }
-
             Button("Cancel", role: .cancel) {
                 presetToDelete = nil
             }
@@ -123,7 +121,7 @@ struct ContentView: View {
             Text("This removes the saved preset from this device.")
         }
         .alert("FastFlagsManager", isPresented: $showingStatus) {
-            Button("OK", role: .cancel) { }
+            Button("OK", role: .cancel) {}
         } message: {
             Text(statusMessage)
         }
@@ -149,7 +147,9 @@ struct ContentView: View {
                     statCard(
                         title: "JSON Status",
                         value: isValidJSON ? "Valid" : "Invalid",
-                        icon: isValidJSON ? "checkmark.circle" : "exclamationmark.circle"
+                        icon: isValidJSON
+                            ? "checkmark.circle"
+                            : "exclamationmark.circle"
                     )
 
                     statCard(
@@ -161,7 +161,7 @@ struct ContentView: View {
 
                 GroupBox("Current Configuration") {
                     VStack(alignment: .leading, spacing: 12) {
-                        Text("Your editor contains the current JSON configuration.")
+                        Text("Manage your current JSON configuration.")
                             .foregroundStyle(.secondary)
 
                         HStack {
@@ -197,7 +197,7 @@ struct ContentView: View {
 
                         actionRow(
                             "Save Preset",
-                            description: "Store this configuration",
+                            description: "Store your configuration",
                             icon: "bookmark"
                         ) {
                             beginSavingPreset()
@@ -207,7 +207,7 @@ struct ContentView: View {
 
                         actionRow(
                             "View Presets",
-                            description: "Load or delete saved configurations",
+                            description: "Load or delete configurations",
                             icon: "square.stack"
                         ) {
                             selection = .presets
@@ -307,18 +307,25 @@ struct ContentView: View {
             }
 
             if presets.isEmpty {
-                ContentUnavailableView {
-                    Label("No Presets Yet", systemImage: "bookmark")
-                } description: {
+                VStack(spacing: 14) {
+                    Image(systemName: "bookmark")
+                        .font(.system(size: 42))
+                        .foregroundStyle(.secondary)
+
+                    Text("No Presets Yet")
+                        .font(.title2.bold())
+
                     Text("Import or paste your FastFlags JSON, then save it here.")
-                } actions: {
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+
                     Button("Open Fast Flags Editor") {
                         selection = .flags
                     }
                     .buttonStyle(.borderedProminent)
                 }
-
-                Spacer()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .padding(24)
             } else {
                 List {
                     ForEach(presets) { preset in
@@ -433,8 +440,11 @@ struct ContentView: View {
         NavigationStack {
             Form {
                 Section("Preset Name") {
-                    TextField("e.g. My Configuration", text: $presetName)
-                        .textInputAutocapitalization(.words)
+                    TextField(
+                        "e.g. My Configuration",
+                        text: $presetName
+                    )
+                    .textInputAutocapitalization(.words)
                 }
 
                 Section("Configuration") {
@@ -453,7 +463,7 @@ struct ContentView: View {
                 }
 
                 if presets.count >= 10 {
-                    Text("All 10 preset slots are full. Delete a preset before saving another.")
+                    Text("All 10 preset slots are full. Delete one before saving.")
                         .foregroundStyle(.red)
                 }
             }
@@ -471,7 +481,9 @@ struct ContentView: View {
                         savePreset()
                     }
                     .disabled(
-                        presetName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        presetName.trimmingCharacters(
+                            in: .whitespacesAndNewlines
+                        ).isEmpty
                         || !isValidJSON
                         || presets.count >= 10
                     )
@@ -581,7 +593,7 @@ struct ContentView: View {
                 flagJSON = imported
                 showStatus("JSON imported successfully.")
             } catch {
-                showStatus("Could not read the file: \(error.localizedDescription)")
+                showStatus("Could not read file: \(error.localizedDescription)")
             }
 
         case .failure(let error):
@@ -617,7 +629,7 @@ struct ContentView: View {
 
     private func beginSavingPreset() {
         guard isValidJSON else {
-            showStatus("Fix your JSON before saving a preset.")
+            showStatus("Fix your JSON before saving.")
             return
         }
 
@@ -662,7 +674,7 @@ struct ContentView: View {
 
         flagJSON = preset.json
         selection = .flags
-        showStatus("Loaded '\(preset.name)'. Your editor now contains its saved configuration.")
+        showStatus("Loaded '\(preset.name)' into the editor.")
     }
 
     private func deletePreset(_ preset: FlagPreset) {
