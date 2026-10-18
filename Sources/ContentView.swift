@@ -1,5 +1,6 @@
 import SwiftUI
 import UniformTypeIdentifiers
+import UIKit
 
 struct FastFlag: Identifiable, Codable, Equatable {
     var id = UUID()
@@ -15,7 +16,6 @@ struct ContentView: View {
     @State private var showImportPicker = false
     @State private var exportMessage = ""
     
-    // The shared folder ID
     let appGroupID = "group.com.prism.fastflags"
     
     var body: some View {
@@ -84,12 +84,17 @@ struct ContentView: View {
             .alert(isPresented: $showExportAlert) {
                 Alert(title: Text("Status"), message: Text(exportMessage), dismissButton: .default(Text("OK")))
             }
-            .fileImporter(
-                isPresented: $showImportPicker,
-                allowedContentTypes: [.json],
-                allowsMultipleSelection: false
-            ) { result in
-                handleImport(result: result)
+            .sheet(isPresented: $showImportPicker) {
+                // Using the reliable UIKit picker
+                JSONDocumentPicker { importedFlags, errorMessage in
+                    if let importedFlags = importedFlags {
+                        self.flags = importedFlags
+                        self.exportMessage = "Successfully imported \(importedFlags.count) flags."
+                    } else {
+                        self.exportMessage = errorMessage ?? "Unknown error."
+                    }
+                    self.showExportAlert = true
+                }
             }
         }
     }
@@ -97,11 +102,10 @@ struct ContentView: View {
     // MARK: - Functions
     
     func prepareAppGroup() {
-        // Ensure the App Group folder exists (prevents the Bad File Descriptor crash)
         if let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
             print("App Group is ready at: \(sharedURL.path)")
         } else {
-            print("Warning: App Group not configured in entitlements.")
+            print("Warning: App Group not configured.")
         }
     }
     
@@ -144,7 +148,6 @@ struct ContentView: View {
                 exportMessage = "Error saving: \(error.localizedDescription)"
             }
         } else {
-            // Fallback to local
             let localURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("ClientAppSettings.json")
             try? jsonData.write(to: localURL)
             exportMessage = "App Group not found. Saved to local Documents folder instead."
@@ -152,37 +155,68 @@ struct ContentView: View {
         showExportAlert = true
     }
     
-    func handleImport(result: Result<[URL], Error>) {
-        do {
-            guard let selectedFile = try result.get().first else { return }
-            
-            // Must access security scoped resource for imported files
-            guard selectedFile.startAccessingSecurityScopedResource() else {
-                exportMessage = "Permission denied to read file."
-                showExportAlert = true
-                return
-            }
-            defer { selectedFile.stopAccessingSecurityScopedResource() }
-            
-            let data = try Data(contentsOf: selectedFile)
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                flags.removeAll()
-                for (key, value) in json {
-                    flags.append(FastFlag(name: key, value: "\(value)"))
-                }
-                exportMessage = "Successfully imported \(flags.count) flags."
-            } else {
-                exportMessage = "Invalid JSON format."
-            }
-        } catch {
-            exportMessage = "Import error: \(error.localizedDescription)"
-        }
-        showExportAlert = true
-    }
-    
     func launchRoblox() {
         if let url = URL(string: "roblox://") {
             UIApplication.shared.open(url)
+        }
+    }
+}
+
+// MARK: - UIKit Document Picker for JSON
+struct JSONDocumentPicker: UIViewControllerRepresentable {
+    var completion: ([FastFlag]?, String?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json], asCopy: true)
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        var parent: JSONDocumentPicker
+        
+        init(_ parent: JSONDocumentPicker) {
+            self.parent = parent
+        }
+        
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let selectedFile = urls.first else { return }
+            
+            do {
+                let data = try Data(contentsOf: selectedFile)
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    var newFlags: [FastFlag] = []
+                    for (key, value) in json {
+                        newFlags.append(FastFlag(name: key, value: "\(value)"))
+                    }
+                    DispatchQueue.main.async {
+                        self.parent.completion(newFlags, nil)
+                        self.parent.dismiss()
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.parent.completion(nil, "Invalid JSON format.")
+                        self.parent.dismiss()
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.parent.completion(nil, "Import error: \(error.localizedDescription)")
+                    self.parent.dismiss()
+                }
+            }
+        }
+        
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            parent.dismiss()
         }
     }
 }
