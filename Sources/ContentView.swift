@@ -8,33 +8,99 @@ struct FastFlag: Identifiable, Codable, Equatable {
     var value: String
 }
 
+struct FastFlagsPreset: Identifiable, Codable {
+    var id = UUID()
+    var name: String
+    var flags: [FastFlag]
+}
+
 struct ContentView: View {
     @State private var flags: [FastFlag] = []
+    @State private var presets: [FastFlagsPreset] = []
+    
     @State private var newFlagName = ""
     @State private var newFlagValue = ""
+    @State private var newPresetName = ""
+    
     @State private var showExportAlert = false
     @State private var showImportPicker = false
-    @State private var exportMessage = ""
+    @State private var showSavePresetAlert = false
+    @State private var alertMessage = ""
     
     let appGroupID = "group.com.prism.fastflags"
     
     var body: some View {
-        NavigationView {
-            VStack {
-                // Add Flag Input
-                HStack {
-                    TextField("Flag Name", text: $newFlagName)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .autocapitalization(.none)
-                    TextField("Value", text: $newFlagValue)
-                        .textFieldStyle(RoundedBorderTextFieldStyle())
-                        .autocapitalization(.none)
-                    Button(action: addFlag) {
-                        Image(systemName: "plus.circle.fill")
-                            .font(.title2)
+        NavigationSplitView {
+            // LEFT SIDEBAR
+            List {
+                Section(header: Text("Saved Presets")) {
+                    if presets.isEmpty {
+                        Text("No presets saved.").foregroundColor(.gray)
+                    } else {
+                        ForEach(presets) { preset in
+                            Button(action: {
+                                flags = preset.flags
+                                alertMessage = "Loaded preset: \(preset.name)"
+                                showExportAlert = true
+                            }) {
+                                Text(preset.name)
+                            }
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    deletePreset(preset)
+                                } label: {
+                                    Label("Delete", systemImage: "trash")
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                Section(header: Text("Actions")) {
+                    Button(action: { showSavePresetAlert = true }) {
+                        Label("Save Current as Preset", systemImage: "square.and.arrow.down.on.square")
+                    }
+                    .disabled(flags.isEmpty)
+                    
+                    Button(role: .destructive, action: clearAllFlags) {
+                        Label("Delete All Flags", systemImage: "trash.fill")
+                    }
+                    .disabled(flags.isEmpty)
+                }
+            }
+            .navigationTitle("FastFlags")
+            .toolbar {
+                Button(action: { showImportPicker = true }) {
+                    Image(systemName: "square.and.arrow.down")
+                }
+            }
+        } detail: {
+            // RIGHT SIDE (MAIN BLOCK)
+            VStack(spacing: 0) {
+                // Add New Flag Area
+                VStack(alignment: .leading) {
+                    Text("Add New Flag").font(.headline).padding(.top)
+                    
+                    HStack {
+                        TextField("Flag Name (e.g., FFlagDebug)", text: $newFlagName)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .autocapitalization(.none)
+                            .font(.system(.body, design: .monospaced))
+                        
+                        TextField("Value (e.g., True)", text: $newFlagValue)
+                            .textFieldStyle(RoundedBorderTextFieldStyle())
+                            .autocapitalization(.none)
+                            .font(.system(.body, design: .monospaced))
+                            .frame(width: 150)
+                        
+                        Button(action: addFlag) {
+                            Image(systemName: "plus.circle.fill").font(.title2)
+                        }
+                        .disabled(newFlagName.isEmpty || newFlagValue.isEmpty)
                     }
                 }
                 .padding()
+                .background(Color(UIColor.secondarySystemBackground))
                 
                 // Flag List
                 List {
@@ -52,69 +118,62 @@ struct ContentView: View {
                     }
                     .onDelete(perform: deleteItems)
                 }
+                .listStyle(.plain)
                 
-                // Action Buttons
-                VStack(spacing: 12) {
-                    HStack {
-                        Button(action: { showImportPicker = true }) {
-                            Label("Import JSON", systemImage: "square.and.arrow.down")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.bordered)
-                        
-                        Button(action: exportJSON) {
-                            Label("Export JSON", systemImage: "square.and.arrow.up")
-                                .frame(maxWidth: .infinity)
-                        }
-                        .buttonStyle(.borderedProminent)
+                // Bottom Toolbar
+                HStack(spacing: 20) {
+                    Button(action: exportJSON) {
+                        Label("Export ClientAppSettings.json", systemImage: "square.and.arrow.up")
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.blue)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
                     }
                     
                     Button(action: launchRoblox) {
                         Label("Launch Roblox", systemImage: "gamecontroller.fill")
                             .frame(maxWidth: .infinity)
-                            .padding(.vertical, 8)
+                            .padding()
+                            .background(Color.green)
+                            .foregroundColor(.white)
+                            .cornerRadius(10)
                     }
-                    .buttonStyle(.bordered)
-                    .tint(.green)
                 }
                 .padding()
+                .background(Color(UIColor.systemBackground))
             }
-            .navigationTitle("FastFlags")
-            .onAppear(perform: prepareAppGroup)
-            .alert(isPresented: $showExportAlert) {
-                Alert(title: Text("Status"), message: Text(exportMessage), dismissButton: .default(Text("OK")))
-            }
-            .sheet(isPresented: $showImportPicker) {
-                // Using the reliable UIKit picker
-                JSONDocumentPicker { importedFlags, errorMessage in
-                    if let importedFlags = importedFlags {
-                        self.flags = importedFlags
-                        self.exportMessage = "Successfully imported \(importedFlags.count) flags."
-                    } else {
-                        self.exportMessage = errorMessage ?? "Unknown error."
-                    }
-                    self.showExportAlert = true
-                }
-            }
+        }
+        .onAppear(perform: loadPresets)
+        .fileImporter(isPresented: $showImportPicker, allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
+            handleImport(result: result)
+        }
+        .alert("Status", isPresented: $showExportAlert) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text(alertMessage)
+        }
+        .alert("Save Preset", isPresented: $showSavePresetAlert) {
+            TextField("Preset Name", text: $newPresetName)
+            Button("Save") { savePreset() }
+            Button("Cancel", role: .cancel) { newPresetName = "" }
+        } message: {
+            Text("Enter a name for these flags (Max 10).")
         }
     }
     
     // MARK: - Functions
-    
-    func prepareAppGroup() {
-        if let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
-            print("App Group is ready at: \(sharedURL.path)")
-        } else {
-            print("Warning: App Group not configured.")
-        }
-    }
     
     func addFlag() {
         let name = newFlagName.trimmingCharacters(in: .whitespaces)
         let value = newFlagValue.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, !value.isEmpty else { return }
         
-        flags.append(FastFlag(name: name, value: value))
+        if let index = flags.firstIndex(where: { $0.name == name }) {
+            flags[index].value = value // Update existing
+        } else {
+            flags.append(FastFlag(name: name, value: value))
+        }
         newFlagName = ""
         newFlagValue = ""
     }
@@ -127,6 +186,50 @@ struct ContentView: View {
         flags.remove(atOffsets: offsets)
     }
     
+    func clearAllFlags() {
+        flags.removeAll()
+    }
+    
+    func savePreset() {
+        let trimmedName = newPresetName.trimmingCharacters(in: .whitespaces)
+        guard !trimmedName.isEmpty, flags.count > 0 else { return }
+        
+        if presets.count >= 10 && !presets.contains(where: { $0.name == trimmedName }) {
+            alertMessage = "You can only save up to 10 presets. Delete one first."
+            showExportAlert = true
+            return
+        }
+        
+        if let index = presets.firstIndex(where: { $0.name == trimmedName }) {
+            presets[index].flags = flags // Overwrite existing preset
+        } else {
+            presets.append(FastFlagsPreset(name: trimmedName, flags: flags))
+        }
+        
+        savePresetsToDisk()
+        newPresetName = ""
+        alertMessage = "Preset saved!"
+        showExportAlert = true
+    }
+    
+    func deletePreset(_ preset: FastFlagsPreset) {
+        presets.removeAll { $0.id == preset.id }
+        savePresetsToDisk()
+    }
+    
+    func savePresetsToDisk() {
+        if let encoded = try? JSONEncoder().encode(presets) {
+            UserDefaults.standard.set(encoded, forKey: "SavedPresets")
+        }
+    }
+    
+    func loadPresets() {
+        if let data = UserDefaults.standard.data(forKey: "SavedPresets"),
+           let decoded = try? JSONDecoder().decode([FastFlagsPreset].self, from: data) {
+            presets = decoded
+        }
+    }
+    
     func exportJSON() {
         var jsonDict: [String: Any] = [:]
         for flag in flags {
@@ -134,7 +237,7 @@ struct ContentView: View {
         }
         
         guard let jsonData = try? JSONSerialization.data(withJSONObject: jsonDict, options: .prettyPrinted) else {
-            exportMessage = "Failed to create JSON data."
+            alertMessage = "Failed to create JSON data."
             showExportAlert = true
             return
         }
@@ -143,14 +246,40 @@ struct ContentView: View {
             let fileURL = sharedURL.appendingPathComponent("ClientAppSettings.json")
             do {
                 try jsonData.write(to: fileURL)
-                exportMessage = "Successfully saved to App Group folder!\n\nPath: \(fileURL.lastPathComponent)"
+                alertMessage = "Successfully saved to App Group folder!\n\nPath: \(fileURL.lastPathComponent)"
             } catch {
-                exportMessage = "Error saving: \(error.localizedDescription)"
+                alertMessage = "Error saving: \(error.localizedDescription)"
             }
         } else {
             let localURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("ClientAppSettings.json")
             try? jsonData.write(to: localURL)
-            exportMessage = "App Group not found. Saved to local Documents folder instead."
+            alertMessage = "App Group not found. Saved to local Documents folder instead."
+        }
+        showExportAlert = true
+    }
+    
+    func handleImport(result: Result<[URL], Error>) {
+        do {
+            guard let selectedFile = try result.get().first else { return }
+            guard selectedFile.startAccessingSecurityScopedResource() else {
+                alertMessage = "Permission denied to read file."
+                showExportAlert = true
+                return
+            }
+            defer { selectedFile.stopAccessingSecurityScopedResource() }
+            
+            let data = try Data(contentsOf: selectedFile)
+            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                flags.removeAll()
+                for (key, value) in json {
+                    flags.append(FastFlag(name: key, value: "\(value)"))
+                }
+                alertMessage = "Successfully imported \(flags.count) flags."
+            } else {
+                alertMessage = "Invalid JSON format."
+            }
+        } catch {
+            alertMessage = "Import error: \(error.localizedDescription)"
         }
         showExportAlert = true
     }
@@ -158,65 +287,6 @@ struct ContentView: View {
     func launchRoblox() {
         if let url = URL(string: "roblox://") {
             UIApplication.shared.open(url)
-        }
-    }
-}
-
-// MARK: - UIKit Document Picker for JSON
-struct JSONDocumentPicker: UIViewControllerRepresentable {
-    var completion: ([FastFlag]?, String?) -> Void
-    @Environment(\.dismiss) private var dismiss
-    
-    func makeCoordinator() -> Coordinator {
-        Coordinator(self)
-    }
-    
-    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json], asCopy: true)
-        picker.delegate = context.coordinator
-        picker.allowsMultipleSelection = false
-        return picker
-    }
-    
-    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
-    
-    class Coordinator: NSObject, UIDocumentPickerDelegate {
-        var parent: JSONDocumentPicker
-        
-        init(_ parent: JSONDocumentPicker) {
-            self.parent = parent
-        }
-        
-        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-            guard let selectedFile = urls.first else { return }
-            
-            do {
-                let data = try Data(contentsOf: selectedFile)
-                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                    var newFlags: [FastFlag] = []
-                    for (key, value) in json {
-                        newFlags.append(FastFlag(name: key, value: "\(value)"))
-                    }
-                    DispatchQueue.main.async {
-                        self.parent.completion(newFlags, nil)
-                        self.parent.dismiss()
-                    }
-                } else {
-                    DispatchQueue.main.async {
-                        self.parent.completion(nil, "Invalid JSON format.")
-                        self.parent.dismiss()
-                    }
-                }
-            } catch {
-                DispatchQueue.main.async {
-                    self.parent.completion(nil, "Import error: \(error.localizedDescription)")
-                    self.parent.dismiss()
-                }
-            }
-        }
-        
-        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-            parent.dismiss()
         }
     }
 }
