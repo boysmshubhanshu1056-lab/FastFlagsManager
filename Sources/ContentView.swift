@@ -145,8 +145,17 @@ struct ContentView: View {
             }
         }
         .onAppear(perform: loadPresets)
-        .fileImporter(isPresented: $showImportPicker, allowedContentTypes: [.json], allowsMultipleSelection: false) { result in
-            handleImport(result: result)
+        // THIS IS THE FIX: Using the reliable UIKit picker sheet
+        .sheet(isPresented: $showImportPicker) {
+            JSONDocumentPicker { importedFlags, errorMessage in
+                if let importedFlags = importedFlags {
+                    self.flags = importedFlags
+                    self.alertMessage = "Successfully imported \(importedFlags.count) flags."
+                } else {
+                    self.alertMessage = errorMessage ?? "Unknown error."
+                }
+                self.showExportAlert = true
+            }
         }
         .alert("Status", isPresented: $showExportAlert) {
             Button("OK", role: .cancel) { }
@@ -170,7 +179,7 @@ struct ContentView: View {
         guard !name.isEmpty, !value.isEmpty else { return }
         
         if let index = flags.firstIndex(where: { $0.name == name }) {
-            flags[index].value = value // Update existing
+            flags[index].value = value
         } else {
             flags.append(FastFlag(name: name, value: value))
         }
@@ -201,7 +210,7 @@ struct ContentView: View {
         }
         
         if let index = presets.firstIndex(where: { $0.name == trimmedName }) {
-            presets[index].flags = flags // Overwrite existing preset
+            presets[index].flags = flags
         } else {
             presets.append(FastFlagsPreset(name: trimmedName, flags: flags))
         }
@@ -258,35 +267,69 @@ struct ContentView: View {
         showExportAlert = true
     }
     
-    func handleImport(result: Result<[URL], Error>) {
-        do {
-            guard let selectedFile = try result.get().first else { return }
-            guard selectedFile.startAccessingSecurityScopedResource() else {
-                alertMessage = "Permission denied to read file."
-                showExportAlert = true
-                return
-            }
-            defer { selectedFile.stopAccessingSecurityScopedResource() }
-            
-            let data = try Data(contentsOf: selectedFile)
-            if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
-                flags.removeAll()
-                for (key, value) in json {
-                    flags.append(FastFlag(name: key, value: "\(value)"))
-                }
-                alertMessage = "Successfully imported \(flags.count) flags."
-            } else {
-                alertMessage = "Invalid JSON format."
-            }
-        } catch {
-            alertMessage = "Import error: \(error.localizedDescription)"
-        }
-        showExportAlert = true
-    }
-    
     func launchRoblox() {
         if let url = URL(string: "roblox://") {
             UIApplication.shared.open(url)
+        }
+    }
+}
+
+// MARK: - UIKit Document Picker for JSON (Fixes the tapping issue)
+struct JSONDocumentPicker: UIViewControllerRepresentable {
+    var completion: ([FastFlag]?, String?) -> Void
+    @Environment(\.dismiss) private var dismiss
+    
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+    
+    func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+        // This is the magic fix: asCopy: true guarantees we can read the file
+        let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json], asCopy: true)
+        picker.delegate = context.coordinator
+        picker.allowsMultipleSelection = false
+        return picker
+    }
+    
+    func updateUIViewController(_ uiViewController: UIDocumentPickerViewController, context: Context) {}
+    
+    class Coordinator: NSObject, UIDocumentPickerDelegate {
+        var parent: JSONDocumentPicker
+        
+        init(_ parent: JSONDocumentPicker) {
+            self.parent = parent
+        }
+        
+        func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+            guard let selectedFile = urls.first else { return }
+            
+            do {
+                let data = try Data(contentsOf: selectedFile)
+                if let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] {
+                    var newFlags: [FastFlag] = []
+                    for (key, value) in json {
+                        newFlags.append(FastFlag(name: key, value: "\(value)"))
+                    }
+                    DispatchQueue.main.async {
+                        self.parent.completion(newFlags, nil)
+                        self.parent.dismiss()
+                    }
+                } else {
+                    DispatchQueue.main.async {
+                        self.parent.completion(nil, "Invalid JSON format.")
+                        self.parent.dismiss()
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async {
+                    self.parent.completion(nil, "Import error: \(error.localizedDescription)")
+                    self.parent.dismiss()
+                }
+            }
+        }
+        
+        func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+            parent.dismiss()
         }
     }
 }
