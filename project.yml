@@ -3,6 +3,7 @@ options:
   bundleIdPrefix: com.yourname
   deploymentTarget:
     iOS: "16.0"
+
 targets:
   FastFlagsManager:
     type: application
@@ -17,3 +18,5 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.yourname.fastflagsmanager
         GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "2"
