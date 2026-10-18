@@ -22,12 +22,10 @@ struct ContentView: View {
     @State private var newFlagValue = ""
     @State private var newPresetName = ""
     
-    @State private var showExportAlert = false
+    @State private var showAlert = false
     @State private var showImportPicker = false
     @State private var showSavePresetAlert = false
     @State private var alertMessage = ""
-    
-    let appGroupID = "group.com.prism.fastflags"
     
     var body: some View {
         NavigationSplitView {
@@ -41,7 +39,7 @@ struct ContentView: View {
                             Button(action: {
                                 flags = preset.flags
                                 alertMessage = "Loaded preset: \(preset.name)"
-                                showExportAlert = true
+                                showAlert = true
                             }) {
                                 Text(preset.name)
                             }
@@ -145,19 +143,20 @@ struct ContentView: View {
             }
         }
         .onAppear(perform: loadPresets)
-        // THIS IS THE FIX: Using the reliable UIKit picker sheet
         .sheet(isPresented: $showImportPicker) {
             JSONDocumentPicker { importedFlags, errorMessage in
                 if let importedFlags = importedFlags {
-                    self.flags = importedFlags
-                    self.alertMessage = "Successfully imported \(importedFlags.count) flags."
+                    // Filter out dangerous flags on import
+                    let safeFlags = importedFlags.filter { !isDangerous($0.name) }
+                    self.flags = safeFlags
+                    self.alertMessage = "Imported \(safeFlags.count) flags. (Dangerous flags removed)."
                 } else {
                     self.alertMessage = errorMessage ?? "Unknown error."
                 }
-                self.showExportAlert = true
+                self.showAlert = true
             }
         }
-        .alert("Status", isPresented: $showExportAlert) {
+        .alert("Status", isPresented: $showAlert) {
             Button("OK", role: .cancel) { }
         } message: {
             Text(alertMessage)
@@ -173,10 +172,24 @@ struct ContentView: View {
     
     // MARK: - Functions
     
+    func isDangerous(_ name: String) -> Bool {
+        let lower = name.lowercased()
+        if lower.contains("anticheat") || lower.contains("bypass") || lower.contains("hitbox") || lower.contains("memoryscan") {
+            return true
+        }
+        return false
+    }
+    
     func addFlag() {
         let name = newFlagName.trimmingCharacters(in: .whitespaces)
         let value = newFlagValue.trimmingCharacters(in: .whitespaces)
         guard !name.isEmpty, !value.isEmpty else { return }
+        
+        if isDangerous(name) {
+            alertMessage = "Blocked: Anti-Cheat bypass flags will get you banned."
+            showAlert = true
+            return
+        }
         
         if let index = flags.firstIndex(where: { $0.name == name }) {
             flags[index].value = value
@@ -205,7 +218,7 @@ struct ContentView: View {
         
         if presets.count >= 10 && !presets.contains(where: { $0.name == trimmedName }) {
             alertMessage = "You can only save up to 10 presets. Delete one first."
-            showExportAlert = true
+            showAlert = true
             return
         }
         
@@ -218,7 +231,7 @@ struct ContentView: View {
         savePresetsToDisk()
         newPresetName = ""
         alertMessage = "Preset saved!"
-        showExportAlert = true
+        showAlert = true
     }
     
     func deletePreset(_ preset: FastFlagsPreset) {
@@ -247,24 +260,22 @@ struct ContentView: View {
         
         guard let jsonData = try? JSONSerialization.data(withJSONObject: jsonDict, options: .prettyPrinted) else {
             alertMessage = "Failed to create JSON data."
-            showExportAlert = true
+            showAlert = true
             return
         }
         
-        if let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
-            let fileURL = sharedURL.appendingPathComponent("ClientAppSettings.json")
-            do {
-                try jsonData.write(to: fileURL)
-                alertMessage = "Successfully saved to App Group folder!\n\nPath: \(fileURL.lastPathComponent)"
-            } catch {
-                alertMessage = "Error saving: \(error.localizedDescription)"
-            }
-        } else {
-            let localURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0].appendingPathComponent("ClientAppSettings.json")
-            try? jsonData.write(to: localURL)
-            alertMessage = "App Group not found. Saved to local Documents folder instead."
+        // LIVE CONTAINER FIX: Save to local documents
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+        let fileURL = documentsDirectory.appendingPathComponent("ClientAppSettings.json")
+        
+        do {
+            try jsonData.write(to: fileURL)
+            alertMessage = "Saved successfully!\n\nNow go to LiveContainer, long-press FastFlags, and tap 'Open Data Folder' to find it."
+        } catch {
+            alertMessage = "Error saving: \(error.localizedDescription)"
         }
-        showExportAlert = true
+        
+        showAlert = true
     }
     
     func launchRoblox() {
@@ -274,7 +285,7 @@ struct ContentView: View {
     }
 }
 
-// MARK: - UIKit Document Picker for JSON (Fixes the tapping issue)
+// MARK: - UIKit Document Picker for JSON
 struct JSONDocumentPicker: UIViewControllerRepresentable {
     var completion: ([FastFlag]?, String?) -> Void
     @Environment(\.dismiss) private var dismiss
@@ -284,7 +295,6 @@ struct JSONDocumentPicker: UIViewControllerRepresentable {
     }
     
     func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
-        // This is the magic fix: asCopy: true guarantees we can read the file
         let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.json], asCopy: true)
         picker.delegate = context.coordinator
         picker.allowsMultipleSelection = false
