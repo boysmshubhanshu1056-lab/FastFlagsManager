@@ -1,21 +1,44 @@
-name: FastFlagsManager
-options:
-  bundleIdPrefix: com.yourname
-  deploymentTarget:
-    iOS: "16.0"
+name: Build FastFlagsManager IPA
 
-targets:
-  FastFlagsManager:
-    type: application
-    platform: iOS
-    sources: [Sources]
-    entitlements:
-      path: FastFlagsManager.entitlements
-      properties:
-        com.apple.security.application-groups:
-          - group.com.prism.fastflags
-    settings:
-      base:
-        INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.fastflagsmanager
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Install XcodeGen
+        run: brew install xcodegen
+
+      - name: Generate Xcode Project
+        run: xcodegen generate
+
+      - name: Build the App
+        run: |
+          xcodebuild -project FastFlagsManager.xcodeproj \
+                     -scheme FastFlagsManager \
+                     -sdk iphoneos \
+                     -configuration Release \
+                     -derivedDataPath ./build \
+                     CODE_SIGN_IDENTITY="" \
+                     CODE_SIGNING_REQUIRED=NO \
+                     CODE_SIGNING_ALLOWED=NO \
+                     build
+
+      - name: Package into IPA
+        run: |
+          mkdir -p Payload
+          cp -r ./build/Build/Products/Release-iphoneos/FastFlagsManager.app ./Payload/
+          zip -r FastFlagsManager.ipa Payload
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: FastFlagsManager-unsigned-ipa
+          path: FastFlagsManager.ipa
