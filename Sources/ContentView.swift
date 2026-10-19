@@ -309,7 +309,7 @@ struct JSONDocumentPicker: UIViewControllerRepresentable {
         var parent: JSONDocumentPicker
         
         init(_ parent: JSONDocumentPicker) {
-            parent = parent
+            self.parent = parent // FIXED: Added 'self.' here
         }
         
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
