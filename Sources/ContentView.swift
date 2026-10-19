@@ -146,7 +146,6 @@ struct ContentView: View {
         .sheet(isPresented: $showImportPicker) {
             JSONDocumentPicker { importedFlags, errorMessage in
                 if let importedFlags = importedFlags {
-                    // Filter out dangerous flags on import
                     let safeFlags = importedFlags.filter { !isDangerous($0.name) }
                     self.flags = safeFlags
                     self.alertMessage = "Imported \(safeFlags.count) flags. (Dangerous flags removed)."
@@ -264,15 +263,18 @@ struct ContentView: View {
             return
         }
         
-        // LIVE CONTAINER FIX: Save to local documents
-        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        let fileURL = documentsDirectory.appendingPathComponent("ClientAppSettings.json")
-        
-        do {
-            try jsonData.write(to: fileURL)
-            alertMessage = "Saved successfully!\n\nNow go to LiveContainer, long-press FastFlags, and tap 'Open Data Folder' to find it."
-        } catch {
-            alertMessage = "Error saving: \(error.localizedDescription)"
+        // UPDATED: Save to the SHARED App Group so the dylib can read it
+        let appGroupID = "group.com.prism.fastflags"
+        if let sharedURL = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: appGroupID) {
+            let fileURL = sharedURL.appendingPathComponent("ClientAppSettings.json")
+            do {
+                try jsonData.write(to: fileURL)
+                alertMessage = "Successfully saved to Shared App Group!\n\nThe dylib will read this file when Roblox launches."
+            } catch {
+                alertMessage = "Error saving to App Group: \(error.localizedDescription)"
+            }
+        } else {
+            alertMessage = "App Group not found. Make sure entitlements are correct."
         }
         
         showAlert = true
@@ -307,7 +309,7 @@ struct JSONDocumentPicker: UIViewControllerRepresentable {
         var parent: JSONDocumentPicker
         
         init(_ parent: JSONDocumentPicker) {
-            self.parent = parent
+            parent = parent
         }
         
         func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
