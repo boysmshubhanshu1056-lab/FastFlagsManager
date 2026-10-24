@@ -1,0 +1,22 @@
+name: FastFlagsManager
+options:
+  bundleIdPrefix: com.yourname
+  deploymentTarget:
+    iOS: "16.0"
+
+targets:
+  FastFlagsManager:
+    type: application
+    platform: iOS
+    sources: [Sources]
+    entitlements:
+      path: FastFlagsManager.entitlements
+      properties:
+        com.apple.security.application-groups:
+          - group.com.prism.fastflags
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yourname.fastflagsmanager
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "2"
